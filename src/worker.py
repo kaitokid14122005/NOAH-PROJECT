@@ -16,7 +16,7 @@ from mysql.connector import Error
 def get_db_connection():
     host     = os.environ.get("MYSQL_HOST", "localhost")
     user     = os.environ.get("MYSQL_USER", "root")
-    password = os.environ.get("MYSQL_PASSWORD", "")
+    password = os.environ.get("MYSQL_PASSWORD", "rootpassword")
     database = os.environ.get("MYSQL_DB", "noah_db")
 
     for attempt in range(10):
