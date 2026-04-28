@@ -1,0 +1,74 @@
+_format_version: "2.1"
+_transform: true
+
+# ============================================
+# SERVICES: Định nghĩa upstream services
+# Kong sẽ forward request đến Flask API
+# ============================================
+services:
+  - name: flask-order-service
+    url: http://flask-api:5000        # Tên service trong docker network
+    connect_timeout: 60000
+    write_timeout: 60000
+    read_timeout: 60000
+
+    # ----------------------------------------
+    # ROUTES: Các endpoint được expose ra ngoài
+    # ----------------------------------------
+    routes:
+      - name: upload-csv-route
+        paths:
+          - /api/upload                 # Client gọi: POST http://localhost:8000/api/upload
+        methods:
+          - POST
+        strip_path: false
+
+      - name: health-check-route
+        paths:
+          - /health                     # Client gọi: GET http://localhost:8000/health
+        methods:
+          - GET
+        strip_path: false
+
+    # ----------------------------------------
+    # PLUGINS áp dụng cho toàn bộ service
+    # ----------------------------------------
+    plugins:
+
+      # 🔐 Plugin 1: KEY AUTHENTICATION
+      # Client phải gửi header: apikey: <your-key>
+      - name: key-auth
+        config:
+          key_names:
+            - apikey                    # Tên header để gửi API key
+          hide_credentials: true        # Ẩn key trước khi forward đến Flask
+          key_in_header: true
+          key_in_query: false
+
+      # ⏱️ Plugin 2: RATE LIMITING
+      # Giới hạn: 10 requests/phút mỗi consumer
+      - name: rate-limiting
+        config:
+          minute: 10                    # Tối đa 10 req/phút
+          hour: 100                     # Tối đa 100 req/giờ
+          policy: local                 # local = đếm trong bộ nhớ Kong
+          fault_tolerant: true          # Không chặn nếu plugin lỗi
+          hide_client_headers: false    # Trả về headers X-RateLimit-*
+
+      # 📝 Plugin 3: REQUEST LOGGING (tùy chọn)
+      - name: file-log
+        config:
+          path: /tmp/kong-requests.log
+          reopen: true
+
+# ============================================
+# CONSUMERS: Người dùng được phép sử dụng API
+# ============================================
+consumers:
+  - username: team8-client
+    keyauth_credentials:
+      - key: team8-secret-api-key-2024   # API key cho nhóm 8
+
+  - username: admin-user
+    keyauth_credentials:
+      - key: admin-master-key-noah       # API key cho admin

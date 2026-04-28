@@ -1,0 +1,182 @@
+# ============================================================
+# NOAH PROJECT - Docker Compose
+# Module 4: Kong Gateway (Security & Governance)
+# ============================================================
+
+networks:
+  noah-network:
+    driver: bridge
+
+volumes:
+  mysql-data:
+  kong-data:
+
+services:
+
+  # ──────────────────────────────────────────────
+  # 1. MySQL Database
+  # ──────────────────────────────────────────────
+  mysql:
+    image: mysql:8.0
+    container_name: noah-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_DATABASE: noah_db
+      MYSQL_USER: noah_user
+      MYSQL_PASSWORD: noah_pass
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+      - ./data/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - noah-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────
+  # 2. RabbitMQ Message Broker
+  # ──────────────────────────────────────────────
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: noah-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: guest
+      RABBITMQ_DEFAULT_PASS: guest
+    ports:
+      - "5672:5672"      # AMQP port
+      - "15672:15672"    # Management UI
+    networks:
+      - noah-network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────
+  # 3. Flask API (Module 2 - Order Processing)
+  # ──────────────────────────────────────────────
+  flask-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: noah-flask-api
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: guest
+      RABBITMQ_PASS: guest
+      MYSQL_HOST: mysql
+      MYSQL_USER: noah_user
+      MYSQL_PASSWORD: noah_pass
+      MYSQL_DB: noah_db
+    ports:
+      - "5000:5000"      # Direct access (bypass Kong - chỉ dùng khi debug)
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - noah-network
+
+  # ──────────────────────────────────────────────
+  # 4. Worker (Module 2 - Queue Consumer)
+  # ──────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: noah-worker
+    environment:
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USER: guest
+      RABBITMQ_PASS: guest
+      MYSQL_HOST: mysql
+      MYSQL_USER: noah_user
+      MYSQL_PASSWORD: noah_pass
+      MYSQL_DB: noah_db
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+    networks:
+      - noah-network
+
+  # ──────────────────────────────────────────────
+  # 5. Kong Database (PostgreSQL)
+  # ──────────────────────────────────────────────
+  kong-database:
+    image: postgres:13
+    container_name: noah-kong-db
+    environment:
+      POSTGRES_USER: kong
+      POSTGRES_DB: kong
+      POSTGRES_PASSWORD: kongpassword
+    volumes:
+      - kong-data:/var/lib/postgresql/data
+    networks:
+      - noah-network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "kong"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────
+  # 6. Kong Migration (chạy 1 lần để setup DB)
+  # ──────────────────────────────────────────────
+  kong-migration:
+    image: kong:3.4
+    container_name: noah-kong-migration
+    command: kong migrations bootstrap
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kongpassword
+      KONG_PG_DATABASE: kong
+    depends_on:
+      kong-database:
+        condition: service_healthy
+    networks:
+      - noah-network
+    restart: on-failure
+
+  # ──────────────────────────────────────────────
+  # 7. Kong Gateway (Module 4 - Security)
+  # ──────────────────────────────────────────────
+  kong:
+    image: kong:3.4
+    container_name: noah-kong
+    environment:
+      KONG_DATABASE: postgres
+      KONG_PG_HOST: kong-database
+      KONG_PG_USER: kong
+      KONG_PG_PASSWORD: kongpassword
+      KONG_PG_DATABASE: kong
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_PROXY_LISTEN: "0.0.0.0:8000"
+    ports:
+      - "8000:8000"    # Kong Proxy (CLIENT GỬI REQUEST VÀO ĐÂY)
+      - "8001:8001"    # Kong Admin API (dùng để config)
+    depends_on:
+      kong-migration:
+        condition: service_started
+      kong-database:
+        condition: service_healthy
+    networks:
+      - noah-network
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

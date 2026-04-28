@@ -1,0 +1,31 @@
+# ─── Python ───────────────────────────────────────
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# ─── Environment variables ────────────────────────
+.env
+.env.*
+
+# ─── Editor ───────────────────────────────────────
+.vscode/settings.json
+.idea/
+
+# ─── OS ───────────────────────────────────────────
+.DS_Store
+Thumbs.db
+
+# ─── Docker volumes (local data) ──────────────────
+# (docker-compose.yml và config vẫn được commit)
+
+# ─── Logs (generated at runtime) ─────────────────
+logs/
+
+# ─── Generated output (optional: bỏ comment nếu muốn commit kết quả) ──
+# output/
