@@ -145,3 +145,8 @@ exit
 ```powershell
 docker-compose down -v
 ```
+
+### BƯỚC 6: Chạy Module 4 (Học về Kong Gateway)
+```powershell
+python module4_learn.py
+```
