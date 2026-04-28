@@ -1,0 +1,201 @@
+# ══════════════════════════════════════════════════════════════════
+# kong_annotated.yml — File học Kong Gateway từ đầu
+# CMU-CS 445 ZIS | Team 8 | NOAH Project
+#
+# File này là bản GIẢI THÍCH của kong/kong.yml
+# Mỗi dòng đều có comment giải thích tại sao cần nó
+# ══════════════════════════════════════════════════════════════════
+
+# Phiên bản format của file này (Kong 2.x trở lên dùng "2.1")
+_format_version: "2.1"
+
+# true = Kong tự chuyển đổi format nếu cần
+_transform: true
+
+
+# ══════════════════════════════════════════════════════════════════
+# SERVICES — "Upstream Server" mà Kong sẽ forward request đến
+# ══════════════════════════════════════════════════════════════════
+#
+# Hãy tưởng tượng SERVICE như một địa chỉ nhà:
+# "Khi có thư (request) cần gửi, chuyển đến nhà này (Flask API)"
+#
+# Không có service → Kong nhận request nhưng không biết forward đi đâu
+
+services:
+
+  - name: flask-order-service           # Tên service — đặt tùy ý, có nghĩa
+                                        # Tên này được dùng khi tạo Route và Plugin
+
+    url: http://flask-api:5000          # ĐỊA CHỈ THẬT của Flask API
+                                        # "flask-api" = tên container trong Docker
+                                        # Client bên ngoài KHÔNG biết địa chỉ này
+                                        # Chỉ Kong biết và forward vào
+
+    connect_timeout: 60000              # Timeout kết nối đến Flask: 60,000ms = 60 giây
+                                        # Nếu Flask không phản hồi trong 60s → lỗi
+
+    write_timeout: 60000                # Timeout gửi data đến Flask: 60 giây
+                                        # Upload file lớn cần timeout cao
+
+    read_timeout: 60000                 # Timeout đọc response từ Flask: 60 giây
+
+
+    # ────────────────────────────────────────────────────────────
+    # ROUTES — "URL nào được phép đi vào hệ thống"
+    # ────────────────────────────────────────────────────────────
+    #
+    # Route = Luật lọc URL
+    # Kong nhận request → so khớp với Route → nếu khớp → forward Service
+    #
+    # Tại sao cần Route?
+    #   Service chỉ biết "đích đến là Flask".
+    #   Route quyết định "URL /api/upload thì cho qua, còn /admin thì không"
+
+    routes:
+
+      # Route 1: Upload CSV đơn hàng
+      - name: upload-csv-route          # Tên route — đặt tùy ý
+
+        paths:
+          - /api/upload                 # Client gọi: POST http://localhost:8000/api/upload
+                                        # Kong sẽ forward đến: POST http://flask-api:5000/api/upload
+
+        methods:
+          - POST                        # CHỈ chấp nhận POST
+                                        # Nếu client gửi GET /api/upload → 405 Method Not Allowed
+
+        strip_path: false               # false = giữ nguyên path /api/upload khi forward Flask
+                                        # true  = xóa path, Flask chỉ nhận "/"
+
+
+      # Route 2: Health check
+      - name: health-check-route
+
+        paths:
+          - /health                     # Client gọi: GET http://localhost:8000/health
+                                        # Forward đến: GET http://flask-api:5000/health
+
+        methods:
+          - GET
+
+        strip_path: false
+
+
+    # ────────────────────────────────────────────────────────────
+    # PLUGINS — "Tính năng bổ sung áp dụng cho Service"
+    # ────────────────────────────────────────────────────────────
+    #
+    # Plugin = Middleware layer trong Kong
+    # Mỗi request đi qua Kong → Plugin được chạy TRƯỚC khi forward Flask
+    #
+    # Thứ tự chạy: key-auth → rate-limiting → forward Flask
+    # Nếu key-auth fail → DỪNG, không chạy rate-limiting, không forward
+
+    plugins:
+
+      # ──────────────────────────────────────────────────────
+      # PLUGIN 1: KEY AUTHENTICATION
+      # ──────────────────────────────────────────────────────
+      # Cơ chế: Client phải gửi header "apikey: <key>"
+      # Kong tra danh sách consumers → tìm key → cho phép hoặc chặn
+      #
+      # Kết quả:
+      #   Đúng key → request tiếp tục đến plugin tiếp theo
+      #   Sai/thiếu key → Kong trả ngay HTTP 401 Unauthorized
+
+      - name: key-auth
+        config:
+          key_names:
+            - apikey                    # Tên header client phải gửi
+                                        # Ví dụ: curl -H "apikey: team8-secret-api-key-2024"
+                                        # Có thể đổi tên: ["X-API-Key", "Authorization", ...]
+
+          hide_credentials: true        # true = Kong xóa header "apikey" trước khi forward Flask
+                                        # → Flask KHÔNG thấy API key trong request
+                                        # → Bảo mật: Flask không cần xử lý auth
+                                        # false = Flask vẫn thấy header apikey
+
+          key_in_header: true           # Cho phép gửi key qua HTTP Header (khuyến nghị)
+
+          key_in_query: false           # KHÔNG cho phép gửi key qua URL query string
+                                        # Ví dụ BAD: /api/upload?apikey=xxx
+                                        # → URL thường bị log → key lộ → không an toàn
+
+
+      # ──────────────────────────────────────────────────────
+      # PLUGIN 2: RATE LIMITING
+      # ──────────────────────────────────────────────────────
+      # Cơ chế: Đếm số request của mỗi consumer trong khoảng thời gian
+      # Vượt ngưỡng → trả 429 Too Many Requests
+      #
+      # Kong tự động thêm headers vào response:
+      #   X-RateLimit-Limit-Minute: 10       ← ngưỡng tối đa
+      #   X-RateLimit-Remaining-Minute: 7    ← còn lại trong phút này
+      #   X-RateLimit-Reset: 1714000000      ← timestamp khi counter reset
+
+      - name: rate-limiting
+        config:
+          minute: 10                    # Tối đa 10 request / phút mỗi consumer
+                                        # team8-client gửi 10 request trong 1 phút → OK
+                                        # Request thứ 11 → Kong trả 429
+
+          hour: 100                     # Tối đa 100 request / giờ
+                                        # Hai ngưỡng hoạt động song song
+                                        # Vượt ngưỡng nào trước → bị chặn bởi ngưỡng đó
+
+          policy: local                 # "local" = đếm trong RAM của Kong instance này
+                                        # "redis" = dùng Redis (cho multi-instance Kong)
+                                        # "cluster" = đồng bộ qua Kong cluster
+                                        # Dự án này dùng "local" là đủ
+
+          fault_tolerant: true          # true = nếu plugin lỗi → vẫn cho request đi qua
+                                        # false = nếu plugin lỗi → chặn hết (an toàn hơn)
+                                        # Demo dùng true để không bị gián đoạn nếu có bug
+
+          hide_client_headers: false    # false = gửi X-RateLimit-* headers về client
+                                        # → Client biết còn bao nhiêu request
+                                        # true  = ẩn headers → client không biết limit
+
+
+      # ──────────────────────────────────────────────────────
+      # PLUGIN 3: FILE LOG (Tùy chọn — để debug)
+      # ──────────────────────────────────────────────────────
+      # Ghi mọi request vào file log bên trong container Kong
+      # Dùng để xem ai đã gọi gì, lúc nào
+
+      - name: file-log
+        config:
+          path: /tmp/kong-requests.log  # Đường dẫn file log trong container Kong
+                                        # Xem log: docker exec noah-kong cat /tmp/kong-requests.log
+          reopen: true                  # Mở lại file sau mỗi lần ghi (tránh file corruption)
+
+
+# ══════════════════════════════════════════════════════════════════
+# CONSUMERS — "Người dùng đã đăng ký được phép dùng API"
+# ══════════════════════════════════════════════════════════════════
+#
+# Consumer = Danh tính của client trong Kong
+# Plugin key-auth dùng bảng này để tra cứu: "key này thuộc ai?"
+#
+# Tại sao cần Consumer?
+#   Key-auth plugin cần biết key hợp lệ là gì
+#   Rate-limiting tính quota riêng cho từng consumer
+#   (team8-client và admin-user có quota độc lập)
+
+consumers:
+
+  # Consumer 1: Nhóm 8 — dùng cho demo và test
+  - username: team8-client              # Tên định danh (không phải mật khẩu)
+    keyauth_credentials:
+      - key: team8-secret-api-key-2024  # API Key thực sự (mật khẩu)
+                                        # Client gửi: apikey: team8-secret-api-key-2024
+                                        # Kong tìm key này → thấy → consumer = team8-client
+                                        # Rate limit tính riêng cho team8-client
+
+  # Consumer 2: Admin — dùng cho quản trị
+  - username: admin-user
+    keyauth_credentials:
+      - key: admin-master-key-noah      # Key khác → quota tính riêng
+                                        # admin-user có thể gửi thêm 10 req/phút nữa
+                                        # (độc lập với team8-client)
