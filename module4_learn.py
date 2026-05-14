@@ -141,18 +141,23 @@ def create_routes():
     print("BƯỚC 3: Tạo Routes (định nghĩa URL nào Kong nhận)")
     print("="*60)
 
+    # Quan trọng:
+    # - strip_path=false: giữ nguyên path khi forward upstream (Flask cần /health, /api/upload)
+    # - path_handling="v1": tránh hành vi "v0" có thể forward thành "/" trong một số cấu hình Kong 3.x
     routes = [
         {
             "name":    "upload-csv-route",
             "paths":   ["/api/upload"],     # URL path client gọi
             "methods": ["POST"],            # Chỉ chấp nhận POST
-            # strip_path=false: giữ nguyên /api/upload khi forward Flask
-            # Nếu strip_path=true: Flask chỉ nhận "/" thay vì "/api/upload"
+            "strip_path": False,
+            "path_handling": "v1",
         },
         {
             "name":    "health-check-route",
             "paths":   ["/health"],
             "methods": ["GET"],
+            "strip_path": False,
+            "path_handling": "v1",
         },
     ]
 

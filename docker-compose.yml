@@ -25,7 +25,9 @@ services:
       MYSQL_USER: noah_user
       MYSQL_PASSWORD: noah_pass
     ports:
-      - "3306:3306"
+      # Host 3306 hay bị trùng với MySQL cài sẵn trên máy
+      # Dùng 3307 để tránh xung đột port
+      - "3307:3306"
     volumes:
       - mysql-data:/var/lib/mysql
       - ./data/init.sql:/docker-entrypoint-initdb.d/init.sql
@@ -41,7 +43,7 @@ services:
   # 2. RabbitMQ Message Broker
   # ──────────────────────────────────────────────
   rabbitmq:
-    image: rabbitmq:3-management
+    image: rabbitmq:3.12-management
     container_name: noah-rabbitmq
     environment:
       RABBITMQ_DEFAULT_USER: guest

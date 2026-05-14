@@ -307,3 +307,41 @@ docker-compose up -d      # Khởi động lại
 python setup_kong.py      # Cấu hình lại Kong (với strip_path=false)
 python test_kong.py       # Tất cả 6 test phải PASS
 ```
+
+---
+
+## 9. GIẢI THÍCH CHI TIẾT CÁC THÀNH PHẦN (Middleware - Service - Data)
+
+Dưới đây là phần giải thích chi tiết về luồng hoạt động và định nghĩa các thành phần dựa trên mô hình kiến trúc của hệ thống:
+
+### A. Luồng chạy của hệ thống (System Workflow)
+
+Luồng đi của một yêu cầu (request) từ người dùng sẽ trải qua các bước sau:
+
+1.  **Client → Middleware:** Người dùng (Web/App) gửi yêu cầu. Yêu cầu này không đi thẳng vào xử lý logic mà phải đi qua "cánh cổng" **Kong API Gateway**. Tại đây, các Middleware sẽ kiểm tra quyền truy cập (Auth), ghi nhật ký (Logging) hoặc trả về dữ liệu nhanh nếu có sẵn trong bộ nhớ đệm (Caching).
+2.  **Middleware → Service:** Sau khi qua bước kiểm tra, API Gateway sẽ điều hướng yêu cầu (**Route Request**) đến dịch vụ tương ứng ở tầng Service:
+    *   Nếu là yêu cầu xử lý dữ liệu thô: Chuyển đến **Python Data Processor**.
+    *   Nếu là yêu cầu nghiệp vụ thông thường: Chuyển đến **Business Service**.
+3.  **Giao tiếp giữa các Service:** Các service có thể giao tiếp với nhau một cách bất đồng bộ thông qua **RabbitMQ (Message Broker)**. Điều này giúp hệ thống không bị treo nếu một dịch vụ xử lý quá lâu.
+4.  **Service → Data:** Các service sẽ đọc/ghi dữ liệu vào các cơ sở dữ liệu tương ứng ở tầng Data để hoàn tất tác vụ.
+5.  **Phản hồi:** Sau khi xử lý xong, kết quả được trả ngược lại theo đúng lộ trình để hiển thị cho Client.
+
+### B. Định nghĩa từng phần
+
+#### 1. Tầng Middleware (Lớp trung gian)
+Đây là lớp bảo vệ và điều phối toàn bộ hệ thống.
+*   **Kong API Gateway / Core Middleware:** Là điểm tiếp nhận duy nhất cho mọi yêu cầu từ Client. Nó đóng vai trò là "người điều phối giao thông", quyết định yêu cầu nào được phép vào và đi đâu.
+*   **Auth Middleware:** Xác thực danh tính người dùng (Login, Token check). Đảm bảo chỉ người dùng hợp lệ mới có thể truy cập hệ thống.
+*   **Logging Middleware:** Ghi lại lịch sử các yêu cầu (Ai đã gọi API nào, lúc mấy giờ, có lỗi không?).
+*   **Caching Middleware:** Lưu trữ tạm thời các kết quả trả về thường xuyên để tăng tốc độ phản hồi.
+
+#### 2. Tầng Service (Lớp nghiệp vụ)
+Nơi chứa toàn bộ logic xử lý "chất xám" của ứng dụng.
+*   **Python Data Processor:** Chuyên trách việc xử lý dữ liệu nặng, tính toán hoặc làm sạch dữ liệu (Data Cleaning).
+*   **Business Service:** Xử lý các nghiệp vụ cốt lõi của ứng dụng (quản lý đơn hàng, người dùng...).
+*   **RabbitMQ / Message Broker:** Là "hộp thư" trung gian giúp các service giao tiếp bất đồng bộ, giúp hệ thống hoạt động mượt mà và không bị nghẽn.
+
+#### 3. Tầng Data (Lớp dữ liệu)
+Nơi lưu trữ bền vững mọi thông tin của hệ thống.
+*   **MySQL (Main DB):** Lưu trữ các dữ liệu chính của hệ thống như thông tin sản phẩm, đơn hàng đã được xử lý sạch.
+*   **PostgreSQL (Support DB):** Thường được dùng cho các mục đích hỗ trợ, ví dụ như lưu trữ cấu hình của Kong Gateway hoặc các dịch vụ phụ trợ khác.

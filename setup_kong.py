@@ -12,18 +12,25 @@ import time
 KONG_ADMIN = "http://localhost:8001"
 FLASK_URL  = "http://flask-api:5000"   # Tên trong docker network
 
+# Tránh bị ảnh hưởng bởi proxy env (HTTP_PROXY/HTTPS_PROXY) trên Windows
+# vì các biến này có thể khiến requests không gọi được localhost.
+session = requests.Session()
+session.trust_env = False
+
 
 def wait_for_kong():
     """Chờ Kong sẵn sàng"""
     print("[Setup] Waiting for Kong Admin API...")
     for i in range(30):
         try:
-            r = requests.get(f"{KONG_ADMIN}/status", timeout=3)
+            r = session.get(f"{KONG_ADMIN}/status", timeout=3)
             if r.status_code == 200:
-                print("[Setup] ✅ Kong is ready!")
+                print("[Setup] Kong is ready!")
                 return True
-        except:
-            pass
+        except Exception as e:
+            # In lỗi gọn để dễ debug môi trường Windows (proxy/SSL/DNS/IPv6...)
+            if i == 0:
+                print(f"[Setup] First attempt error: {type(e).__name__}: {e}")
         print(f"[Setup] Attempt {i+1}/30... retrying in 3s")
         time.sleep(3)
     return False
@@ -39,11 +46,11 @@ def create_service():
         "read_timeout":    60000,
         "write_timeout":   60000,
     }
-    r = requests.put(f"{KONG_ADMIN}/services/flask-order-service", json=payload)
+    r = session.put(f"{KONG_ADMIN}/services/flask-order-service", json=payload)
     if r.status_code in [200, 201]:
-        print(f"[Setup] ✅ Service created: {r.json()['id']}")
+        print(f"[Setup] Service created: {r.json()['id']}")
     else:
-        print(f"[Setup] ⚠️  Service response: {r.status_code} - {r.text}")
+        print(f"[Setup] WARN Service response: {r.status_code} - {r.text}")
 
 
 def create_routes():
@@ -53,24 +60,28 @@ def create_routes():
             "name":    "upload-csv-route",
             "paths":   ["/api/upload"],
             "methods": ["POST"],
+            "strip_path": False,
+            "path_handling": "v1",
         },
         {
             "name":    "health-check-route",
             "paths":   ["/health"],
             "methods": ["GET"],
+            "strip_path": False,
+            "path_handling": "v1",
         },
     ]
 
     print("\n[Setup] Creating Routes...")
     for route in routes:
-        r = requests.put(
+        r = session.put(
             f"{KONG_ADMIN}/services/flask-order-service/routes/{route['name']}",
             json=route
         )
         if r.status_code in [200, 201]:
-            print(f"[Setup] ✅ Route created: {route['name']}")
+            print(f"[Setup] Route created: {route['name']}")
         else:
-            print(f"[Setup] ⚠️  Route response: {r.status_code} - {r.text}")
+            print(f"[Setup] WARN Route response: {r.status_code} - {r.text}")
 
 
 def enable_key_auth():
@@ -85,14 +96,14 @@ def enable_key_auth():
             "key_in_query":     False,
         }
     }
-    r = requests.post(
+    r = session.post(
         f"{KONG_ADMIN}/services/flask-order-service/plugins",
         json=payload
     )
     if r.status_code in [200, 201]:
-        print(f"[Setup] ✅ Key Auth enabled!")
+        print("[Setup] Key Auth enabled!")
     else:
-        print(f"[Setup] ⚠️  Key Auth response: {r.status_code} - {r.text}")
+        print(f"[Setup] WARN Key Auth response: {r.status_code} - {r.text}")
 
 
 def enable_rate_limiting():
@@ -108,14 +119,14 @@ def enable_rate_limiting():
             "hide_client_headers": False,
         }
     }
-    r = requests.post(
+    r = session.post(
         f"{KONG_ADMIN}/services/flask-order-service/plugins",
         json=payload
     )
     if r.status_code in [200, 201]:
-        print(f"[Setup] ✅ Rate Limiting enabled!")
+        print("[Setup] Rate Limiting enabled!")
     else:
-        print(f"[Setup] ⚠️  Rate Limiting response: {r.status_code} - {r.text}")
+        print(f"[Setup] WARN Rate Limiting response: {r.status_code} - {r.text}")
 
 
 def create_consumers():
@@ -128,22 +139,22 @@ def create_consumers():
     print("\n[Setup] Creating Consumers and API Keys...")
     for consumer in consumers:
         # Tạo consumer
-        r = requests.put(
+        r = session.put(
             f"{KONG_ADMIN}/consumers/{consumer['username']}",
             json={"username": consumer["username"]}
         )
         if r.status_code in [200, 201]:
-            print(f"[Setup] ✅ Consumer created: {consumer['username']}")
+            print(f"[Setup] Consumer created: {consumer['username']}")
 
         # Tạo API key cho consumer
-        r2 = requests.post(
+        r2 = session.post(
             f"{KONG_ADMIN}/consumers/{consumer['username']}/key-auth",
             json={"key": consumer["key"]}
         )
         if r2.status_code in [200, 201]:
-            print(f"[Setup] ✅ API Key assigned: {consumer['key']}")
+            print(f"[Setup] API Key assigned: {consumer['key']}")
         else:
-            print(f"[Setup] ⚠️  Key response: {r2.status_code} - {r2.text}")
+            print(f"[Setup] WARN Key response: {r2.status_code} - {r2.text}")
 
 
 def verify_setup():
@@ -153,30 +164,30 @@ def verify_setup():
     print("="*50)
 
     # List services
-    r = requests.get(f"{KONG_ADMIN}/services")
+    r = session.get(f"{KONG_ADMIN}/services")
     services = r.json().get("data", [])
-    print(f"\n📦 Services ({len(services)}):")
+    print(f"\nServices ({len(services)}):")
     for s in services:
-        print(f"   - {s['name']} → {s['host']}:{s['port']}")
+        print(f"   - {s['name']} -> {s['host']}:{s['port']}")
 
     # List routes
-    r = requests.get(f"{KONG_ADMIN}/routes")
+    r = session.get(f"{KONG_ADMIN}/routes")
     routes = r.json().get("data", [])
-    print(f"\n🛣️  Routes ({len(routes)}):")
+    print(f"\nRoutes ({len(routes)}):")
     for rt in routes:
         print(f"   - {rt['name']}: {rt['paths']} [{rt['methods']}]")
 
     # List plugins
-    r = requests.get(f"{KONG_ADMIN}/plugins")
+    r = session.get(f"{KONG_ADMIN}/plugins")
     plugins = r.json().get("data", [])
-    print(f"\n🔌 Plugins ({len(plugins)}):")
+    print(f"\nPlugins ({len(plugins)}):")
     for p in plugins:
         print(f"   - {p['name']}")
 
     # List consumers
-    r = requests.get(f"{KONG_ADMIN}/consumers")
+    r = session.get(f"{KONG_ADMIN}/consumers")
     consumers = r.json().get("data", [])
-    print(f"\n👤 Consumers ({len(consumers)}):")
+    print(f"\nConsumers ({len(consumers)}):")
     for c in consumers:
         print(f"   - {c['username']}")
 
@@ -188,7 +199,8 @@ def main():
     print("="*50)
 
     if not wait_for_kong():
-        print("[Setup] ❌ Kong is not reachable. Make sure docker-compose is running.")
+        # Windows console có thể lỗi encode với ký tự Unicode (ví dụ: ❌) khi dùng codepage cp1252/cp1258
+        print("[Setup] Kong is not reachable. Make sure docker-compose is running.")
         return
 
     create_service()
@@ -199,7 +211,7 @@ def main():
     verify_setup()
 
     print("\n" + "="*50)
-    print("✅ Kong setup completed!")
+    print("Kong setup completed!")
     print("\nAPI Endpoints (qua Kong Gateway):")
     print("  POST http://localhost:8000/api/upload")
     print("       Header: apikey: team8-secret-api-key-2024")

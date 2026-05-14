@@ -23,8 +23,8 @@ CSV_PATH = os.path.join(os.path.dirname(__file__), "data", "orders_test.csv")
 
 def print_result(title, response):
     status = response.status_code
-    icon   = "✅" if status < 400 else "❌"
-    print(f"\n{icon} [{status}] {title}")
+    icon = "OK" if status < 400 else "ERR"
+    print(f"\n[{icon}] [{status}] {title}")
     print(f"   Headers: X-RateLimit-Remaining-Minute = "
           f"{response.headers.get('X-RateLimit-Remaining-Minute', 'N/A')}")
     try:
@@ -34,33 +34,33 @@ def print_result(title, response):
 
 
 def test_health_no_key():
-    """Test 1: Không có API key → 401 Unauthorized"""
+    """Test 1: Không có API key -> 401 Unauthorized"""
     print("\n" + "="*50)
     print("TEST 1: Health check WITHOUT API Key")
     r = requests.get(f"{KONG_PROXY}/health")
-    print_result("No API Key → Expected 401", r)
+    print_result("No API Key -> Expected 401", r)
     assert r.status_code == 401, f"Expected 401, got {r.status_code}"
-    print("   PASS ✅")
+    print("   PASS")
 
 
 def test_health_wrong_key():
-    """Test 2: API Key sai → 401 Unauthorized"""
+    """Test 2: API Key sai -> 401 Unauthorized"""
     print("\n" + "="*50)
     print("TEST 2: Health check with WRONG API Key")
     r = requests.get(f"{KONG_PROXY}/health", headers={"apikey": WRONG_KEY})
-    print_result("Wrong API Key → Expected 401", r)
+    print_result("Wrong API Key -> Expected 401", r)
     assert r.status_code == 401, f"Expected 401, got {r.status_code}"
-    print("   PASS ✅")
+    print("   PASS")
 
 
 def test_health_valid_key():
-    """Test 3: API Key hợp lệ → 200 OK"""
+    """Test 3: API Key hợp lệ -> 200 OK"""
     print("\n" + "="*50)
     print("TEST 3: Health check with VALID API Key")
     r = requests.get(f"{KONG_PROXY}/health", headers={"apikey": VALID_KEY})
-    print_result("Valid API Key → Expected 200", r)
+    print_result("Valid API Key -> Expected 200", r)
     assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    print("   PASS ✅")
+    print("   PASS")
 
 
 def test_upload_valid_csv():
@@ -69,7 +69,10 @@ def test_upload_valid_csv():
     print("TEST 4: Upload valid CSV through Kong Gateway")
 
     # Tạo CSV test nhỏ trong memory
-    csv_content = "order_id,product_id,quantity\n9001,1,5\n9002,2,3\n9003,3,1\n"
+    # Lưu ý: data/init.sql seed products bắt đầu từ id=100
+    # Nếu dùng product_id=1,2,3 thì Worker sẽ skip (product không tồn tại)
+    # order_id trong init.sql đã có rất nhiều (20,000 orders). Dùng id cao để tránh trùng.
+    csv_content = "order_id,product_id,quantity\n990001,100,5\n990002,101,3\n990003,102,1\n"
     files = {"file": ("orders_test.csv", csv_content, "text/csv")}
 
     r = requests.post(
@@ -77,30 +80,31 @@ def test_upload_valid_csv():
         files=files,
         headers={"apikey": VALID_KEY}
     )
-    print_result("Upload CSV → Expected 200", r)
+    print_result("Upload CSV -> Expected 200", r)
     assert r.status_code == 200, f"Expected 200, got {r.status_code}"
-    print("   PASS ✅")
+    print("   PASS")
 
 
 def test_upload_no_key():
-    """Test 5: Upload CSV không có API key → 401"""
+    """Test 5: Upload CSV không có API key -> 401"""
     print("\n" + "="*50)
     print("TEST 5: Upload CSV WITHOUT API Key")
 
-    csv_content = "order_id,product_id,quantity\n9001,1,5\n"
+    # Dùng product_id hợp lệ để tránh noise khi debug end-to-end
+    csv_content = "order_id,product_id,quantity\n990001,100,5\n"
     files = {"file": ("test.csv", csv_content, "text/csv")}
 
     r = requests.post(f"{KONG_PROXY}/api/upload", files=files)
-    print_result("No Key Upload → Expected 401", r)
+    print_result("No Key Upload -> Expected 401", r)
     assert r.status_code == 401, f"Expected 401, got {r.status_code}"
-    print("   PASS ✅")
+    print("   PASS")
 
 
 def test_rate_limiting():
-    """Test 6: Gửi nhiều request để trigger Rate Limiting → 429"""
+    """Test 6: Send many requests to trigger Rate Limiting -> 429"""
     print("\n" + "="*50)
-    print("TEST 6: Rate Limiting Test (gửi 12 requests liên tiếp)")
-    print("   Limit: 10 req/phút → Request thứ 11+ phải bị chặn")
+    print("TEST 6: Rate Limiting Test (send 12 requests)")
+    print("   Limit: 10 req/min -> Request 11+ must be blocked")
 
     got_429 = False
     for i in range(12):
@@ -110,15 +114,15 @@ def test_rate_limiting():
 
         if r.status_code == 429:
             got_429 = True
-            print(f"   🚦 Rate limit triggered at request {i+1}!")
+            print(f"   Rate limit triggered at request {i+1}!")
             break
 
         time.sleep(0.1)  # Nhỏ delay tránh bị block ngay
 
     if got_429:
-        print("   PASS ✅ Rate Limiting working correctly")
+        print("   PASS Rate Limiting working correctly")
     else:
-        print("   ⚠️  Rate limit not triggered (might need time to reset)")
+        print("   WARN Rate limit not triggered (might need time to reset)")
 
 
 def main():
@@ -136,7 +140,7 @@ def main():
         test_rate_limiting()
 
         print("\n" + "="*50)
-        print("🎉 ALL TESTS PASSED!")
+        print("ALL TESTS PASSED!")
         print("="*50)
 
     except AssertionError as e:
